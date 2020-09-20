@@ -14,7 +14,7 @@ Plugin for JMeter that allows to write load test data on-the-fly to influxDB.
     - InfluxDB as data source is added to Grafana.
  
  
- - Download the [JMeter-InfluxDB-Writer](https://github.com/sfakrudeen78/JMeter-InfluxDB-Writer/releases/download/v-1.2.2/JMeter-InfluxDB-Writer-plugin-1.2.2.jar) plugin.
+ - Download the [JMeter-InfluxDB-Writer](https://repo1.maven.org/maven2/com/rationaleemotions/jmeter/plugins/influxdb-writer/1.4.0/influxdb-writer-1.4.0.jar) plugin.
  
  - Place the jar in JMETER_HOME/lib/ext directory and start the Jmeter.
  
