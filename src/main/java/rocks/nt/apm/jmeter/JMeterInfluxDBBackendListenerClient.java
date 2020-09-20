@@ -118,6 +118,9 @@ public class JMeterInfluxDBBackendListenerClient extends AbstractBackendListener
 	 * Processes sampler results.
 	 */
 	public void handleSampleResults(List<SampleResult> sampleResults, BackendListenerContext context) {
+		if (Boolean.getBoolean("jmeter.influxdb.disable")) {
+			return;
+		}
 		// Gather all the listeners
 		List<SampleResult> allSampleResults = new ArrayList<SampleResult>();
 		for (SampleResult sampleResult : sampleResults) {
