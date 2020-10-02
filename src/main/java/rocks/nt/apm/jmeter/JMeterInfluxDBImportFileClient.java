@@ -3,7 +3,7 @@ package rocks.nt.apm.jmeter;
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileWriter;
-import java.io.IOException;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -20,11 +20,11 @@ import org.apache.jmeter.visualizers.backend.BackendListenerContext;
 import org.apache.jorphan.logging.LoggingManager;
 import org.apache.log.Logger;
 import org.influxdb.dto.Point;
-import org.influxdb.dto.Point.Builder;
 
 import rocks.nt.apm.jmeter.config.influxdb.RequestMeasurement;
 import rocks.nt.apm.jmeter.config.influxdb.TestStartEndMeasurement;
 import rocks.nt.apm.jmeter.config.influxdb.VirtualUsersMeasurement;
+import rocks.nt.apm.jmeter.internal.RuntimeBehavior;
 
 /**
  * Backend listener that writes JMeter metrics to influxDB directly.
@@ -67,11 +67,6 @@ public class JMeterInfluxDBImportFileClient extends AbstractBackendListenerClien
 	private BufferedWriter exportFileWriter;
 
 	/**
-	 * List of samplers to record.
-	 */
-	private String samplersList = "";
-
-	/**
 	 * Regex if samplers are defined through regular expression.
 	 */
 	private String regexForSamplerList;
@@ -85,20 +80,31 @@ public class JMeterInfluxDBImportFileClient extends AbstractBackendListenerClien
 	 * Processes sampler results.
 	 */
 	public void handleSampleResults(List<SampleResult> sampleResults, BackendListenerContext context) {
+		if (RuntimeBehavior.skipRunningListener()) {
+			LOGGER.warn(getClass().getName() + " is disabled. Skipping further operations");
+			return;
+		}
 		for (SampleResult sampleResult : sampleResults) {
 			getUserMetrics().add(sampleResult);
 
-			if ((null != regexForSamplerList && sampleResult.getSampleLabel().matches(regexForSamplerList)) || samplersToFilter.contains(sampleResult.getSampleLabel())) {
-				Point point = Point.measurement(RequestMeasurement.MEASUREMENT_NAME).time(System.currentTimeMillis(), TimeUnit.MILLISECONDS)
-						.tag(RequestMeasurement.Tags.REQUEST_NAME, sampleResult.getSampleLabel()).addField(RequestMeasurement.Fields.ERROR_COUNT, sampleResult.getErrorCount())
+			if ((null != regexForSamplerList && sampleResult.getSampleLabel().matches(regexForSamplerList))
+					|| samplersToFilter.contains(sampleResult.getSampleLabel())) {
+				Point point = Point.measurement(RequestMeasurement.MEASUREMENT_NAME)
+						.time(System.currentTimeMillis(), TimeUnit.MILLISECONDS)
+						.tag(RequestMeasurement.Tags.REQUEST_NAME, sampleResult.getSampleLabel())
+						.addField(RequestMeasurement.Fields.ERROR_COUNT, sampleResult.getErrorCount())
 						.addField(RequestMeasurement.Fields.RESPONSE_TIME, sampleResult.getTime()).build();
-				try {
-					exportFileWriter.append(point.lineProtocol());
-					exportFileWriter.newLine();
-				} catch (IOException e) {
-					throw new RuntimeException(e);
-				}
+				writeSilently(point);
 			}
+		}
+	}
+
+	private void writeSilently(Point point) {
+		try {
+			exportFileWriter.append(point.lineProtocol());
+			exportFileWriter.newLine();
+		} catch (Throwable t) {
+			LOGGER.error("Failed writing to influx", t);
 		}
 	}
 
@@ -114,6 +120,10 @@ public class JMeterInfluxDBImportFileClient extends AbstractBackendListenerClien
 
 	@Override
 	public void setupTest(BackendListenerContext context) throws Exception {
+		if (RuntimeBehavior.skipRunningListener()) {
+			LOGGER.warn(getClass().getName() + " is disabled. Skipping further operations");
+			return;
+		}
 		testName = context.getParameter(KEY_TEST_NAME, "Test");
 
 		File exportFile = new File(context.getParameter(KEY_FILE_PATH, "influxDBExport.txt"));
@@ -132,10 +142,11 @@ public class JMeterInfluxDBImportFileClient extends AbstractBackendListenerClien
 
 		exportFileWriter = new BufferedWriter(new FileWriter(exportFile));
 
-		Point startPoint = Point.measurement(TestStartEndMeasurement.MEASUREMENT_NAME).time(System.currentTimeMillis(), TimeUnit.MILLISECONDS)
-				.tag(TestStartEndMeasurement.Tags.TYPE, TestStartEndMeasurement.Values.STARTED).tag(TestStartEndMeasurement.Tags.TEST_NAME, testName).build();
-		exportFileWriter.append(startPoint.lineProtocol());
-		exportFileWriter.newLine();
+		Point startPoint = Point.measurement(TestStartEndMeasurement.MEASUREMENT_NAME)
+				.time(System.currentTimeMillis(), TimeUnit.MILLISECONDS)
+				.tag(TestStartEndMeasurement.Tags.TYPE, TestStartEndMeasurement.Values.STARTED)
+				.tag(TestStartEndMeasurement.Tags.TEST_NAME, testName).build();
+		writeSilently(startPoint);
 
 		parseSamplers(context);
 		scheduler = Executors.newScheduledThreadPool(1);
@@ -145,16 +156,20 @@ public class JMeterInfluxDBImportFileClient extends AbstractBackendListenerClien
 
 	@Override
 	public void teardownTest(BackendListenerContext context) throws Exception {
+		if (RuntimeBehavior.skipRunningListener()) {
+			LOGGER.warn(getClass().getName() + " is disabled. Skipping further operations");
+			return;
+		}
 		LOGGER.info("Shutting down influxDB scheduler...");
 		scheduler.shutdown();
 
 		addVirtualUsersMetrics(0, 0, 0, 0, JMeterContextService.getThreadCounts().finishedThreads);
-		Point endPoint = Point.measurement(TestStartEndMeasurement.MEASUREMENT_NAME).time(System.currentTimeMillis(), TimeUnit.MILLISECONDS)
-				.tag(TestStartEndMeasurement.Tags.TYPE, TestStartEndMeasurement.Values.FINISHED).tag(TestStartEndMeasurement.Tags.TEST_NAME, testName).build();
+		Point endPoint = Point.measurement(TestStartEndMeasurement.MEASUREMENT_NAME)
+				.time(System.currentTimeMillis(), TimeUnit.MILLISECONDS)
+				.tag(TestStartEndMeasurement.Tags.TYPE, TestStartEndMeasurement.Values.FINISHED)
+				.tag(TestStartEndMeasurement.Tags.TEST_NAME, testName).build();
+		writeSilently(endPoint);
 
-		exportFileWriter.append(endPoint.lineProtocol());
-		exportFileWriter.newLine();
-		
 		try {
 			scheduler.awaitTermination(30, TimeUnit.SECONDS);
 			LOGGER.info("influxDB scheduler terminated!");
@@ -171,6 +186,10 @@ public class JMeterInfluxDBImportFileClient extends AbstractBackendListenerClien
 	 * Periodically writes virtual users metrics to influxDB.
 	 */
 	public void run() {
+		if (RuntimeBehavior.skipRunningListener()) {
+			LOGGER.warn(getClass().getName() + " is disabled. Skipping further operations");
+			return;
+		}
 		try {
 			ThreadCounts tc = JMeterContextService.getThreadCounts();
 			addVirtualUsersMetrics(getUserMetrics().getMinActiveThreads(), getUserMetrics().getMeanActiveThreads(), getUserMetrics().getMaxActiveThreads(), tc.startedThreads, tc.finishedThreads);
@@ -186,35 +205,35 @@ public class JMeterInfluxDBImportFileClient extends AbstractBackendListenerClien
 	 *            {@link BackendListenerContext}.
 	 */
 	private void parseSamplers(BackendListenerContext context) {
-		samplersList = context.getParameter(KEY_SAMPLERS_LIST, "");
-		samplersToFilter = new HashSet<String>();
+		String samplersList = context.getParameter(KEY_SAMPLERS_LIST, "");
+		samplersToFilter = new HashSet<>();
 		if (context.getBooleanParameter(KEY_USE_REGEX_FOR_SAMPLER_LIST, false)) {
 			regexForSamplerList = samplersList;
 		} else {
 			regexForSamplerList = null;
 			String[] samplers = samplersList.split(SEPARATOR);
-			samplersToFilter = new HashSet<String>();
-			for (String samplerName : samplers) {
-				samplersToFilter.add(samplerName);
-			}
+			samplersToFilter = new HashSet<>();
+			samplersToFilter.addAll(Arrays.asList(samplers));
 		}
 	}
 
 	/**
 	 * Write thread metrics.
 	 */
-	private void addVirtualUsersMetrics(int minActiveThreads, int meanActiveThreads, int maxActiveThreads, int startedThreads, int finishedThreads) {
-		Builder builder = Point.measurement(VirtualUsersMeasurement.MEASUREMENT_NAME).time(System.currentTimeMillis(), TimeUnit.MILLISECONDS);
-		builder.addField(VirtualUsersMeasurement.Fields.MIN_ACTIVE_THREADS, minActiveThreads);
-		builder.addField(VirtualUsersMeasurement.Fields.MAX_ACTIVE_THREADS, maxActiveThreads);
-		builder.addField(VirtualUsersMeasurement.Fields.MEAN_ACTIVE_THREADS, meanActiveThreads);
-		builder.addField(VirtualUsersMeasurement.Fields.STARTED_THREADS, startedThreads);
-		builder.addField(VirtualUsersMeasurement.Fields.FINISHED_THREADS, finishedThreads);
-		try {
-			exportFileWriter.append(builder.build().lineProtocol());
-			exportFileWriter.newLine();
-		} catch (IOException e) {
-			throw new RuntimeException(e);
-		}
+	private void addVirtualUsersMetrics(
+			int minActiveThreads,
+			int meanActiveThreads,
+			int maxActiveThreads,
+			int startedThreads,
+			int finishedThreads) {
+		Point point = Point.measurement(VirtualUsersMeasurement.MEASUREMENT_NAME)
+				.time(System.currentTimeMillis(), TimeUnit.MILLISECONDS)
+				.addField(VirtualUsersMeasurement.Fields.MIN_ACTIVE_THREADS, minActiveThreads)
+				.addField(VirtualUsersMeasurement.Fields.MAX_ACTIVE_THREADS, maxActiveThreads)
+				.addField(VirtualUsersMeasurement.Fields.MEAN_ACTIVE_THREADS, meanActiveThreads)
+				.addField(VirtualUsersMeasurement.Fields.STARTED_THREADS, startedThreads)
+				.addField(VirtualUsersMeasurement.Fields.FINISHED_THREADS, finishedThreads)
+				.build();
+		writeSilently(point);
 	}
 }

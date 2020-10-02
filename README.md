@@ -9,7 +9,7 @@ For now the only new addition that was done to this repository was to add a new 
 
 `-Djmeter.influxdb.disable`
 
-The modified uber jar can be downloaded from [Maven central](https://repo1.maven.org/maven2/com/rationaleemotions/jmeter/plugins/influxdb-writer/1.4.0/influxdb-writer-1.4.0.jar)
+The modified uber jar can be downloaded from [Maven central](https://repo1.maven.org/maven2/com/rationaleemotions/jmeter/plugins/influxdb-writer/1.5.0/influxdb-writer-1.5.0.jar)
 
 The Maven GAV co-ordinates are as below:
 
@@ -17,7 +17,7 @@ The Maven GAV co-ordinates are as below:
 <dependency>
     <groupId>com.rationaleemotions.jmeter.plugins</groupId>
     <artifactId>influxdb-writer</artifactId>
-    <version>1.4.0</version>
+    <version>1.5.0</version>
 </dependency>
 
 ```
